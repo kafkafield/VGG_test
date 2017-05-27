@@ -19,9 +19,9 @@ class vgg16:
         self.imgs = imgs
         self.convlayers()
         self.fc_layers()
-        self.probs = tf.nn.softmax(self.fc4l)
-        if weights is not None and sess is not None:
-            self.load_weights(weights, sess)
+        self.probs = self.fc4l# tf.nn.softmax(self.fc4l)
+        #if weights is not None and sess is not None:
+        #    self.load_weights(weights, sess)
 
 
     def convlayers(self):
@@ -243,7 +243,7 @@ class vgg16:
             fc3b = tf.Variable(tf.constant(1.0, shape=[1000], dtype=tf.float32),
                                  trainable=True, name='biases')
             self.fc3l = tf.nn.bias_add(tf.matmul(self.fc2, fc3w), fc3b)
-            self.fc3 = tf.nn.relu(fc3l)
+            self.fc3 = tf.nn.relu(self.fc3l)
             self.parameters += [fc3w, fc3b]
 
         # fc4
@@ -254,7 +254,8 @@ class vgg16:
             fc4b = tf.Variable(tf.constant(1.0, shape=[12], dtype=tf.float32),
                                  trainable=True, name='biases')
             self.fc4l = tf.nn.bias_add(tf.matmul(self.fc3, fc4w), fc4b)
-            self.parameters += [fc4w, fc4b]
+            self.fc4w = fc4w
+            self.fc4b = fc4b
 
     def load_weights(self, weight_file, sess):
         weights = np.load(weight_file)
@@ -262,6 +263,9 @@ class vgg16:
         for i, k in enumerate(keys):
             print i, k, np.shape(weights[k])
             sess.run(self.parameters[i].assign(weights[k]))
+        sess.run(self.fc4w.initializer)
+        sess.run(self.fc4b.initializer)
+        print "Pre-trained model loaded. "
 
 
 def predict_example():
@@ -347,20 +351,81 @@ def load_test():
     print X.shape
     np.save('X_test.npy', X)
 
+from sklearn.model_selection import train_test_split
 
 def train():
-    epoch = 100
-    batch_size = 64
+    learning_rate = 0.001
+    training_epoch = 10
+    batch_size = 40
+    display_step = 10
+    n_classes = 12
 
     sess = tf.Session()
+    X = np.load('X_train.npy')
+    y = np.load('y_train.npy')
+    onehot = tf.one_hot(y, n_classes)
+    y = sess.run(onehot)
+    print y.shape
+
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size = 0.2, random_state = 47)
+    print y_train.shape
+
     imgs = tf.placeholder(tf.float32, [None, 224, 224, 3])
+    imgs_y = tf.placeholder(tf.float32, [None, n_classes])
     vgg = vgg16(imgs, 'vgg16_weights.npz', sess)
 
-    cost = tf.reduce_mean(-tf.reduce_sum(y*tf.log(vgg.probs), reduction_indices=1)
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(cost)
-    init = tf.global_variables+initializer()
+    cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=vgg.probs, labels=imgs_y))
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)
+
+    correct_pred = tf.equal(tf.argmax(vgg.probs, 1), tf.argmax(imgs_y, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+
+    #init = tf.global_variables_initializer()
+    init = tf.initialize_all_variables()
+
+    sess.run(init)
+    if sess is not None:
+        vgg.load_weights('vgg16_weights.npz', sess)
+
+    train_size = X_train.shape[0]
+    for epoch in range(training_epoch):
+        step = 1
+        print "Epoch: " + str(epoch)
+        while step * batch_size < train_size:
+            batch_x = X_train[(step-1)*batch_size:step*batch_size]
+            batch_y = y_train[(step-1)*batch_size:step*batch_size]
+            sess.run(optimizer, feed_dict={vgg.imgs: batch_x, imgs_y:batch_y})
+            # print "Alive?"
+            if step % display_step == 0:
+                loss, acc = sess.run([cost, accuracy], feed_dict={vgg.imgs:batch_x, imgs_y:batch_y})
+                print "Iter: " + str(step*batch_size) + ", Minibatch Loss= "+"{:.6f}".format(loss) + \
+                    ", Training Accuracy= " + "{:.5f}".format(acc)
+            step += 1
+        batch_x = X_train[(step-1)*batch_size:]
+        batch_y = y_train[(step-1)*batch_size:]
+        sess.run(optimizer, feed_dict={vgg.imgs: batch_x, imgs_y:batch_y})
+
+
+    print "Begin validation. "
+    val_size = X_val.shape[0]
+    step = 1
+    res = 0
+    while step * batch_size < val_size:
+        batch_x = X_val[(step-1)*batch_size:step*batch_size]
+        batch_y = y_val[(step-1)*batch_size:step*batch_size]
+        acc = sess.run(accuracy, feed_dict={vgg.imgs:batch_x, imgs_y:batch_y})
+        res += acc*batch_size
+        step += 1
+
+    batch_x = X_train[(step-1)*batch_size:]
+    batch_y = y_train[(step-1)*batch_size:]
+    acc = sess.run(accuracy, feed_dict={vgg.imgs:batch_x, imgs_y:batch_y})
+    res += acc*(val_size-(step-1)*batch_size)
+    res /= val_size
+    print "Validation Accuracy: " + "{:.5f}".format(res)
 
 
 if __name__ == '__main__':
     # load_train()
     # load_test()
+    train()
