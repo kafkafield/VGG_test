@@ -417,8 +417,8 @@ def train():
         res += acc*batch_size
         step += 1
 
-    batch_x = X_train[(step-1)*batch_size:]
-    batch_y = y_train[(step-1)*batch_size:]
+    batch_x = X_val[(step-1)*batch_size:]
+    batch_y = y_val[(step-1)*batch_size:]
     acc = sess.run(accuracy, feed_dict={vgg.imgs:batch_x, imgs_y:batch_y})
     res += acc*(val_size-(step-1)*batch_size)
     res /= val_size
